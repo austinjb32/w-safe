@@ -1,6 +1,6 @@
 # Women Safe APP
 
-This is a Finance app where you can manage your money.
+This is a Safety app for women.
 
 ## Screenshots
 
