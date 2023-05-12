@@ -2,7 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/src/widgets/container.dart';
 import 'package:flutter/src/widgets/framework.dart';
 import 'package:flutter_finance_app/pages/home_page.dart';
+import 'package:flutter_finance_app/pages/signup.dart';
 import 'package:flutter_finance_app/theme/colors.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+
+
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -12,9 +17,11 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+
+
   TextEditingController _email =
-      TextEditingController(text: "Username@gmail.com");
-  TextEditingController password = TextEditingController(text: "abcdef123456");
+      TextEditingController();
+  TextEditingController _password = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +33,7 @@ class _LoginPageState extends State<LoginPage> {
 
   Widget getBody() {
     var size = MediaQuery.of(context).size;
+    bool _obscureText = false;
     return SafeArea(
         child: Center(
       child: Column(
@@ -39,9 +47,8 @@ class _LoginPageState extends State<LoginPage> {
             decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 image: DecorationImage(
-                    image: NetworkImage(
-                        "https://images.unsplash.com/photo-1531256456869-ce942a665e80?ixid=MXwxMjA3fDB8MHxzZWFyY2h8MTI4fHxwcm9maWxlfGVufDB8fDB8&ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=60"),
-                    fit: BoxFit.cover)),
+                    image:AssetImage('lib/assets/images/queen.png')
+                    ,fit: BoxFit.cover)),
           ),
           SizedBox(
             height: 50,
@@ -120,17 +127,24 @@ class _LoginPageState extends State<LoginPage> {
                           color: Color(0xff67727d)),
                     ),
                     TextField(
-                      obscureText: true,
-                      controller: password,
+                      obscureText: _obscureText,
+                      controller: _password,
                       cursorColor: black,
                       style: TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.w500,
                           color: black),
                       decoration: InputDecoration(
-                          prefixIcon: Icon(Icons.lock_outline_rounded),
+                          prefixIcon: const Icon(Icons.lock_outline_rounded),
                           prefixIconColor: Colors.black,
-                          suffixIcon: Icon(Icons.remove_red_eye_outlined),
+                          suffixIcon: IconButton(
+                      icon: Icon(_obscureText ? Icons.visibility : Icons.visibility_off),
+                      onPressed: () {
+                        setState(() {
+                          _obscureText = !_obscureText;
+                        });
+                      },
+                    ),
                           suffixIconColor: Colors.black,
                           hintText: "Password",
                           border: InputBorder.none),
@@ -142,20 +156,34 @@ class _LoginPageState extends State<LoginPage> {
             height: 20,
           ),
           GestureDetector(
-            onTap: () {
-              Navigator.pushReplacement(
+            onTap: () async {
+              try {
+                // Call Firebase to sign in with email and password
+                UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+                  email: _email.text.trim(),
+                  password: _password.text,
+                );
+
+                // Navigate to the home page if sign-in is successful
+                Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) => HomePage(),
-                  ));
+                  MaterialPageRoute(builder: (context) => HomePage()),
+                );
+              } on FirebaseAuthException catch (e) {
+                if (e.code == 'user-not-found') {
+                  print('No user found for that email.');
+                } else if (e.code == 'wrong-password') {
+                  print('Wrong password provided for that user.');
+                }
+              } catch (e) {
+                print(e);
+              }
             },
             child: Container(
-              
               padding: EdgeInsets.all(16),
               margin: EdgeInsets.symmetric(horizontal: 25),
               decoration: BoxDecoration(
-                
-                  color:buttoncolor, borderRadius: BorderRadius.circular(25)),
+                  color: buttoncolor, borderRadius: BorderRadius.circular(25)),
               child: Center(
                 child: Text(
                   "Login",
@@ -167,27 +195,27 @@ class _LoginPageState extends State<LoginPage> {
               ),
             ),
           ),
+
           SizedBox(
             height: 20,
           ),
           Padding(
             padding: const EdgeInsets.only(left: 26.0, right: 26.0),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  "Signup",
-                  style: TextStyle(
-                      color: Colors.black,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w300),
-                ),
-                Text(
-                  "Forgot Password?",
-                  style: TextStyle(
-                      color: Colors.black,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w300),
+                InkWell(
+                  onTap:()=>{Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => SignupPage()),
+                  )},
+                  child: Text(
+                    "Signup",
+                    style: TextStyle(
+                        color: Colors.black,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w300),
+                  ),
                 ),
               ],
             ),

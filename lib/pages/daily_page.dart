@@ -1,20 +1,141 @@
+import 'dart:ffi';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/src/widgets/container.dart';
 import 'package:flutter/src/widgets/framework.dart';
 import 'package:flutter_finance_app/theme/colors.dart';
+import 'package:geolocator_platform_interface/src/models/position.dart';
 import 'package:icon_badge/icon_badge.dart';
+import 'package:intl/intl.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
-class DailyPage extends StatefulWidget {
-  const DailyPage({super.key});
+Future<Position> _determinePosition() async {
+  bool serviceEnabled;
+  LocationPermission permission;
 
-  @override
-  State<DailyPage> createState() => _DailyPageState();
+  // Test if location services are enabled.
+  serviceEnabled = await Geolocator.isLocationServiceEnabled();
+  if (!serviceEnabled) {
+    // Location services are not enabled don't continue
+    // accessing the position and request users of the
+    // App to enable the location services.
+    return Future.error('Location services are disabled.');
+  }
+
+  permission = await Geolocator.checkPermission();
+  if (permission == LocationPermission.denied) {
+    permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied) {
+      // Permissions are denied, next time you could try
+      // requesting permissions again (this is also where
+      // Android's shouldShowRequestPermissionRationale
+      // returned true. According to Android guidelines
+      // your App should show an explanatory UI now.
+      return Future.error('Location permissions are denied');
+    }
+  }
+
+  if (permission == LocationPermission.deniedForever) {
+    // Permissions are denied forever, handle appropriately.
+    return Future.error(
+        'Location permissions are permanently denied, we cannot request permissions.');
+  }
+  // When we reach here, permissions are granted and we can
+  // continue accessing the position of the device.
+  return await Geolocator.getCurrentPosition();
 }
 
-class _DailyPageState extends State<DailyPage> {
+class DailyPage extends StatefulWidget {
+
+
   @override
+  _DailyPageState createState() => _DailyPageState();
+}
+
+class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver {
+  Position? _positionFuture;
+  Map<String, dynamic>? userMap;
+  bool isLoading = false;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final TextEditingController _search = TextEditingController();
+  late Map<String, dynamic> position ;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance!.addObserver(this);
+
+    setPosition();
+  }
+
+  void setPosition() async{
+    final position = await _determinePosition();
+    setState(() {
+      _positionFuture = position;
+    });
+    if(_positionFuture != null)
+     setStatus("Online");
+    // _positionFuture.then((value) => setState((){
+    //   position = value as Map<String, dynamic>;
+    // }));
+  }
+
+  void setStatus(String status) async {
+    await _firestore.collection('users').doc(_auth.currentUser!.uid).update({
+      "status": status,
+      "longitude": _positionFuture!.longitude,
+      "latitude": _positionFuture!.latitude
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // online
+      setStatus("Online");
+    } else {
+      // offline
+      setStatus("Offline");
+    }
+  }
+
+  String chatRoomId(String user1, String user2) {
+    if (user1[0].toLowerCase().codeUnits[0] >
+        user2.toLowerCase().codeUnits[0]) {
+      return "$user1$user2";
+    } else {
+      return "$user2$user1";
+    }
+  }
+
+  void onSearch() async {
+    FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+    setState(() {
+      var isLoading = true;
+    });
+
+    await _firestore
+        .collection('users')
+        .where("email", isEqualTo: _search.text)
+        .get()
+        .then((value) {
+      setState(() {
+        userMap = value.docs[0].data();
+        isLoading = false;
+      });
+      print(userMap);
+    });
+  }
+
   Widget build(BuildContext context) {
+    var now = DateTime.now();
+    var formatter = DateFormat('EEEE, MMMM d');
+    var formattedDate = formatter.format(now);
     var size = MediaQuery.of(context).size;
     return SafeArea(
         child: SingleChildScrollView(
@@ -44,47 +165,55 @@ class _DailyPageState extends State<DailyPage> {
                   ),
                   SizedBox(
                     height: 15,
-                  ),
-                  Column(
-                    children: [
-                      Container(
-                        width: 70,
-                        height: 70,
-                        decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            image: DecorationImage(
-                                image: NetworkImage(
-                                    "https://images.unsplash.com/photo-1531256456869-ce942a665e80?ixid=MXwxMjA3fDB8MHxzZWFyY2h8MTI4fHxwcm9maWxlfGVufDB8fDB8&ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=60"),
-                                fit: BoxFit.cover)),
-                      ),
-                      SizedBox(
-                        height: 10,
-                      ),
-                      Container(
-                        width: (size.width - 40) * 0.6,
-                        child: Column(
+                  ),StreamBuilder<DocumentSnapshot>(
+                    stream: _firestore.collection('users').doc(_auth.currentUser?.uid).snapshots(),
+                    builder: (context, snapshot) {
+                      if (snapshot.data != null) {
+                        Map<String, dynamic> userMap = snapshot.data!.data() as Map<String, dynamic>;
+                        return Column(
                           children: [
-                            Text(
-                              "Abbie Wilson",
-                              style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: mainFontColor),
+                            Container(
+                              width: 70,
+                              height: 70,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                image: DecorationImage(
+                                  image: NetworkImage(userMap['image']),
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
                             ),
-                            SizedBox(
-                              height: 10,
-                            ),
-                            Text(
-                              "Software Developer",
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                  color: black),
+                            SizedBox(height: 10),
+                            Container(
+                              width: (size.width - 40) * 0.6,
+                              child: Column(
+                                children: [
+                                  Text(
+                                    userMap['name'],
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                      color: mainFontColor,
+                                    ),
+                                  ),
+                                  SizedBox(height: 10),
+                                  Text(
+                                    userMap['status'],
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: black,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
-                        ),
-                      )
-                    ],
+                        );
+                      } else {
+                        return Container(); // or any other widget to return
+                      }
+                    },
                   ),
                   SizedBox(
                     height: 50,
@@ -92,10 +221,46 @@ class _DailyPageState extends State<DailyPage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      Column(
-                        children: [
+                      // FutureBuilder<Position>(
+                      //   future: _positionFuture,
+                      //   builder: (context, snapshot) {
+                      //     if (snapshot.hasData) {
+                      //       var position = snapshot.data!;
+                      //       // Use the position to build the widget tree
+                      //       return Column(children: [
+                      //         Text(
+                      //           "${position.latitude.roundToDouble()}",
+                      //           style: TextStyle(
+                      //               fontSize: 16,
+                      //               fontWeight: FontWeight.w600,
+                      //               color: mainFontColor),
+                      //         ),
+                      //         SizedBox(
+                      //           height: 5,
+                      //         ),
+                      //         Text(
+                      //           "Latitude",
+                      //           style: TextStyle(
+                      //               fontSize: 12,
+                      //               fontWeight: FontWeight.w100,
+                      //               color: black),
+                      //         )
+                      //       ]);
+                      //     } else if (snapshot.hasError) {
+                      //       // Handle errors
+                      //       return Center(
+                      //         child: Text(
+                      //             'Error retrieving location: ${snapshot.error}'),
+                      //       );
+                      //     } else {
+                      //       // Display a loading indicator while waiting for the position to be retrieved
+                      //       return Center(child: CircularProgressIndicator());
+                      //     }
+                      //   },
+                      // ),
+                  _positionFuture!=null ? Column(children: [
                           Text(
-                            "\$8900",
+                            "${_positionFuture!.latitude.roundToDouble()}",
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
@@ -105,66 +270,77 @@ class _DailyPageState extends State<DailyPage> {
                             height: 5,
                           ),
                           Text(
-                            "Income",
+                            "Latitude",
                             style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w100,
                                 color: black),
-                          ),
-                        ],
-                      ),
+                          )
+                        ])
+                      : Center(child: CircularProgressIndicator()),
                       Container(
                         width: 0.5,
                         height: 40,
                         color: black.withOpacity(0.3),
                       ),
-                      Column(
-                        children: [
-                          Text(
-                            "\$5500",
-                            style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: mainFontColor),
-                          ),
-                          SizedBox(
-                            height: 5,
-                          ),
-                          Text(
-                            "Expenses",
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w100,
-                                color: black),
-                          ),
-                        ],
-                      ),
-                      Container(
-                        width: 0.5,
-                        height: 40,
-                        color: black.withOpacity(0.3),
-                      ),
-                      Column(
-                        children: [
-                          Text(
-                            "\$890",
-                            style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: mainFontColor),
-                          ),
-                          SizedBox(
-                            height: 5,
-                          ),
-                          Text(
-                            "Loan",
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w100,
-                                color: black),
-                          ),
-                        ],
-                      ),
+                      // FutureBuilder<Position>(
+                      //   future: _positionFuture,
+                      //   builder: (context, snapshot) {
+                      //     if (snapshot.hasData) {
+                      //       var position = snapshot.data!;
+                      //       // Use the position to build the widget tree
+                      //       return Column(children: [
+                      //         Text(
+                      //           "${_positionFuture.longitude.roundToDouble()}",
+                      //           style: TextStyle(
+                      //               fontSize: 16,
+                      //               fontWeight: FontWeight.w600,
+                      //               color: mainFontColor),
+                      //         ),
+                      //         SizedBox(
+                      //           height: 5,
+                      //         ),
+                      //         Text(
+                      //           "Longitude",
+                      //           style: TextStyle(
+                      //               fontSize: 12,
+                      //               fontWeight: FontWeight.w100,
+                      //               color: black),
+                      //         )
+                      //       ]);
+                      //     } else if (snapshot.hasError) {
+                      //       // Handle errors
+                      //       return Center(
+                      //         child: Text(
+                      //             'Error retrieving location: ${snapshot.error}'),
+                      //       );
+                      //     } else {
+                      //       // Display a loading indicator while waiting for the position to be retrieved
+                      //       return Center(child: CircularProgressIndicator());
+                      //     }
+                      //   },
+                      // ),
+                      _positionFuture != null ?
+                      Column(children: [
+                                Text(
+                                  "${_positionFuture!.longitude.roundToDouble()}",
+                                  style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: mainFontColor),
+                                ),
+                                SizedBox(
+                                  height: 5,
+                                ),
+                                Text(
+                                  "Longitude",
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w100,
+                                      color: black),
+                                )
+                              ]):
+                             Center(child: CircularProgressIndicator()),
                     ],
                   )
                 ],
@@ -183,23 +359,23 @@ class _DailyPageState extends State<DailyPage> {
                   children: [
                     Row(
                       children: [
-                         Text("Overview",
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 20,
-                      color: mainFontColor,
-                    )),
-                    IconBadge(
-        icon: Icon(Icons.notifications_none),
-        itemCount: 1,
-        badgeColor: Colors.red,
-        itemColor: mainFontColor,
-        hideZero: true,
-        top: -1,
-        onTap: () {
-          print('test');
-        },
-      ),
+                        Text("Overview",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 20,
+                              color: mainFontColor,
+                            )),
+                        IconBadge(
+                          icon: Icon(Icons.notifications_none),
+                          itemCount: 1,
+                          badgeColor: Colors.red,
+                          itemColor: mainFontColor,
+                          hideZero: true,
+                          top: -1,
+                          onTap: () {
+                            print('test');
+                          },
+                        ),
                       ],
                     )
                   ],
@@ -210,7 +386,7 @@ class _DailyPageState extends State<DailyPage> {
                 //       fontSize: 20,
                 //       color: mainFontColor,
                 //     )),
-                Text("Jan 16, 2023",
+                Text(formattedDate,
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 13,
@@ -252,15 +428,15 @@ class _DailyPageState extends State<DailyPage> {
                           child: Row(
                             children: [
                               Container(
-                                width: 50,
-                                height: 50,
+                                width: 30,
+                                height: 30,
                                 decoration: BoxDecoration(
                                   color: arrowbgColor,
                                   borderRadius: BorderRadius.circular(15),
                                   // shape: BoxShape.circle
                                 ),
                                 child: Center(
-                                    child: Icon(Icons.arrow_upward_rounded)),
+                                    child: Icon(CupertinoIcons.book)),
                               ),
                               SizedBox(
                                 width: 15,
@@ -269,46 +445,21 @@ class _DailyPageState extends State<DailyPage> {
                                 child: Container(
                                   width: (size.width - 90) * 0.7,
                                   child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          "Sent",
-                                          style: TextStyle(
-                                              fontSize: 15,
-                                              color: black,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                        SizedBox(
-                                          height: 5,
-                                        ),
-                                        Text(
-                                          "Sending Payment to Clients",
+                                          "A strong woman knows she has strength enough for the journey, but a woman of strength knows it is in the journey where she will become strong.",
                                           style: TextStyle(
                                               fontSize: 12,
-                                              color: black.withOpacity(0.5),
-                                              fontWeight: FontWeight.w400),
+                                              color: black,
+                                              fontWeight: FontWeight.bold),
                                         ),
                                       ]),
                                 ),
                               ),
-                              Expanded(
-                                child: Container(
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        "\$150",
-                                        style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.bold,
-                                            color: black),
-                                      )
-                                    ],
-                                  ),
-                                ),
-                              )
                             ],
                           ),
                         ),
@@ -345,15 +496,15 @@ class _DailyPageState extends State<DailyPage> {
                           child: Row(
                             children: [
                               Container(
-                                width: 50,
-                                height: 50,
+                                width: 30,
+                                height: 30,
                                 decoration: BoxDecoration(
                                   color: arrowbgColor,
                                   borderRadius: BorderRadius.circular(15),
                                   // shape: BoxShape.circle
                                 ),
                                 child: Center(
-                                    child: Icon(Icons.arrow_downward_rounded)),
+                                    child: Icon(CupertinoIcons.person)),
                               ),
                               SizedBox(
                                 width: 15,
@@ -362,46 +513,21 @@ class _DailyPageState extends State<DailyPage> {
                                 child: Container(
                                   width: (size.width - 90) * 0.7,
                                   child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          "Receive",
-                                          style: TextStyle(
-                                              fontSize: 15,
-                                              color: black,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                        SizedBox(
-                                          height: 5,
-                                        ),
-                                        Text(
-                                          "Receiving Payment from company",
+                                          "Respect for ourselves guides our morals; respect for others guides our manners.",
                                           style: TextStyle(
                                               fontSize: 12,
-                                              color: black.withOpacity(0.5),
-                                              fontWeight: FontWeight.w400),
+                                              color: black,
+                                              fontWeight: FontWeight.bold),
                                         ),
                                       ]),
                                 ),
                               ),
-                              Expanded(
-                                child: Container(
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        "\$250",
-                                        style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.bold,
-                                            color: black),
-                                      )
-                                    ],
-                                  ),
-                                ),
-                              )
                             ],
                           ),
                         ),
@@ -411,95 +537,6 @@ class _DailyPageState extends State<DailyPage> {
                 ),
                 SizedBox(
                   height: 5,
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        margin: EdgeInsets.only(
-                          top: 10,
-                          left: 25,
-                          right: 25,
-                        ),
-                        decoration: BoxDecoration(
-                            color: white,
-                            borderRadius: BorderRadius.circular(25),
-                            boxShadow: [
-                              BoxShadow(
-                                color: grey.withOpacity(0.03),
-                                spreadRadius: 10,
-                                blurRadius: 3,
-                                // changes position of shadow
-                              ),
-                            ]),
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                              top: 10, bottom: 10, right: 20, left: 20),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 50,
-                                height: 50,
-                                decoration: BoxDecoration(
-                                  color: arrowbgColor,
-                                  borderRadius: BorderRadius.circular(15),
-                                  // shape: BoxShape.circle
-                                ),
-                                child: Center(
-                                    child: Icon(CupertinoIcons.money_dollar)),
-                              ),
-                              SizedBox(
-                                width: 15,
-                              ),
-                              Expanded(
-                                child: Container(
-                                  width: (size.width - 90) * 0.7,
-                                  child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          "Loan",
-                                          style: TextStyle(
-                                              fontSize: 15,
-                                              color: black,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                        SizedBox(
-                                          height: 5,
-                                        ),
-                                        Text(
-                                          "Loan for the Car",
-                                          style: TextStyle(
-                                              fontSize: 12,
-                                              color: black.withOpacity(0.5),
-                                              fontWeight: FontWeight.w400),
-                                        ),
-                                      ]),
-                                ),
-                              ),
-                              Expanded(
-                                child: Container(
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        "\$400",
-                                        style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.bold,
-                                            color: black),
-                                      )
-                                    ],
-                                  ),
-                                ),
-                              )
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
               ],
             ),
